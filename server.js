@@ -16,7 +16,7 @@ async function init(){
  CREATE TABLE IF NOT EXISTS notifications(id SERIAL PRIMARY KEY,title TEXT,body TEXT,created TIMESTAMPTZ DEFAULT now());`);
  await q('CREATE TABLE IF NOT EXISTS group_members(user_id INT REFERENCES users(id) ON DELETE CASCADE,group_id INT REFERENCES groups(id) ON DELETE CASCADE,joined TIMESTAMPTZ DEFAULT now(),PRIMARY KEY(user_id,group_id))');
  await q('CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL DEFAULT \'\')');
- await q('INSERT INTO group_members(user_id,group_id) SELECT DISTINCT user_id,group_id FROM payments WHERE user_id IS NOT NULL ON CONFLICT DO NOTHING');
+ await q('INSERT INTO group_members(user_id,group_id) SELECT DISTINCT user_id,group_id FROM payments WHERE user_id IS NOT NULL AND group_id IS NOT NULL ON CONFLICT DO NOTHING');
  await q('INSERT INTO app_settings(key,value) VALUES (\'orange_number\',\'\'),(\'mtn_number\',\'\'),(\'wave_number\',\'\') ON CONFLICT(key) DO NOTHING');
  await q('ALTER TABLE payments ADD COLUMN IF NOT EXISTS payer_phone TEXT');
  await q('ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT');
