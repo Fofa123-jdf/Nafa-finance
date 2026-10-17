@@ -21,18 +21,24 @@ async function init(){
  CREATE TABLE IF NOT EXISTS notifications(id SERIAL PRIMARY KEY,title TEXT,body TEXT,created TIMESTAMPTZ DEFAULT now());`);
  console.log('Tables vérifiées');
  await q('ALTER TABLE groups ADD COLUMN IF NOT EXISTS whatsapp_url TEXT');
- console.log('Colonne WhatsApp vérifiée');
+ await q('ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT');
+ await q('ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by INT REFERENCES users(id)');
+ await q("UPDATE users SET referral_code='NAFA'||id WHERE referral_code IS NULL");
+ await q('CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uidx ON users(referral_code) WHERE referral_code IS NOT NULL');
+ console.log('Colonnes WhatsApp et parrainage vérifiées');
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
  if(process.env.ADMIN_PHONE&&process.env.ADMIN_PASSWORD)await q("INSERT INTO users(name,phone,pass,role) VALUES('Administrateur',$1,$2,'admin') ON CONFLICT(phone) DO UPDATE SET role='admin',pass=$2",[ph(process.env.ADMIN_PHONE),await bcrypt.hash(process.env.ADMIN_PASSWORD,10)]);
 }
-app.post('/api/register',h(async(req,res)=>{const{name,password,birth,sex}=req.body,phone=ph(req.body.phone);
+app.post('/api/register',h(async(req,res)=>{const{name,password,birth,sex}=req.body,phone=ph(req.body.phone),refCode=String(req.body.referral_code||'').trim().toUpperCase();
  if(!name||name.length<3||phone.length<8||!password||password.length<6)return res.status(400).json({error:'Nom, téléphone (8 chiffres min.) et mot de passe (6 caractères min.) requis'});
- try{const r=await q('INSERT INTO users(name,phone,pass,birth,sex) VALUES($1,$2,$3,$4,$5) RETURNING id,role',[name.trim(),phone,await bcrypt.hash(password,10),birth||null,sex||null]);
+ try{let sponsor=null;if(refCode){const sr=await q("SELECT id FROM users WHERE referral_code=$1 AND role='member' LIMIT 1",[refCode]);if(!sr.rowCount)return res.status(400).json({error:'Code de parrainage invalide'});sponsor=sr.rows[0].id;}
+  const r=await q('INSERT INTO users(name,phone,pass,birth,sex,referred_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,role',[name.trim(),phone,await bcrypt.hash(password,10),birth||null,sex||null,sponsor]);
+  await q("UPDATE users SET referral_code='NAFA'||id WHERE id=$1",[r.rows[0].id]);
   await q('INSERT INTO notifications(title,body) VALUES($1,$2)',['Nouveau membre inscrit',name.trim()]);res.json({token:tok(r.rows[0])})}
  catch(e){if(e.code==='23505')return res.status(409).json({error:'Ce numéro est déjà inscrit'});throw e}}));
 app.post('/api/login',h(async(req,res)=>{const r=await q('SELECT * FROM users WHERE phone=$1',[ph(req.body.phone)]);const u=r.rows[0];
  if(!u||!(await bcrypt.compare(String(req.body.password||''),u.pass)))return res.status(400).json({error:'Numéro ou mot de passe incorrect'});res.json({token:tok(u),role:u.role})}));
-app.get('/api/me',auth(),h(async(req,res)=>{const r=await q('SELECT id,name,phone,role FROM users WHERE id=$1',[req.u.id]);if(!r.rowCount)return res.status(401).json({error:'auth'});res.json(r.rows[0])}));
+app.get('/api/me',auth(),h(async(req,res)=>{const r=await q('SELECT id,name,phone,role,referral_code FROM users WHERE id=$1',[req.u.id]);if(!r.rowCount)return res.status(401).json({error:'auth'});res.json(r.rows[0])}));
 app.get('/api/groups',auth(),h(async(req,res)=>res.json((await q('SELECT * FROM groups ORDER BY id')).rows)));
 app.post('/api/pay',auth(),h(async(req,res)=>{const amount=parseInt(req.body.amount,10),gid=parseInt(req.body.group_id,10),method=String(req.body.method||'');
  if(!(amount>=100&&amount<=1000000)||!['Orange Money','MTN Money','Wave'].includes(method)||!(await q('SELECT 1 FROM groups WHERE id=$1',[gid])).rowCount)return res.status(400).json({error:'Montant (min. 100 FCFA), groupe et moyen de paiement requis'});
