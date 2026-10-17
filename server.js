@@ -98,4 +98,4 @@ async function processScheduledItems(){
  }catch(e){console.error('Scheduler Nafa Finance:',e)}
 }
 
-init().then(()=>app.listen(process.env.PORT||3000,()=>console.log('Nafa Finance prêt');setInterval(processScheduledItems,60000);processScheduledItems())).catch(e=>{console.error(e);process.exit(1)});
+init().then(()=>app.listen(process.env.PORT||3000,()=>{console.log('Nafa Finance prêt');setInterval(processScheduledItems,60000);processScheduledItems()})).catch(e=>{console.error(e);process.exit(1)});
