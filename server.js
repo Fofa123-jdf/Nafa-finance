@@ -38,5 +38,9 @@ app.get('/api/admin/payments',adm,h(async(req,res)=>res.json((await q("SELECT p.
 app.post('/api/admin/payments/:id/:act',adm,h(async(req,res)=>{const st={validate:'validated',refuse:'refused'}[req.params.act];if(!st)return res.status(404).json({error:'Action inconnue'});
  const r=await q("UPDATE payments SET status=$1 WHERE id=$2 AND status='pending' RETURNING id",[st,parseInt(req.params.id,10)]);if(!r.rowCount)return res.status(409).json({error:'Paiement déjà traité'});res.json({ok:true})}));
 app.get('/api/admin/notifications',adm,h(async(req,res)=>res.json((await q('SELECT title,body,created FROM notifications ORDER BY id DESC LIMIT 50')).rows)));
-app.use(express.static('public'));
+const path=require('path'),A=['style.css','common.js','member.js','admin.js','nafa-logo.png','nafa-icon-192.png'];
+app.get('/',(q,r)=>r.redirect('/member/'));
+app.get('/member/?',(q,r)=>r.sendFile(path.join(__dirname,'member.html')));
+app.get('/admin/?',(q,r)=>r.sendFile(path.join(__dirname,'admin.html')));
+app.get('/assets/:f',(q,r)=>A.includes(q.params.f)?r.sendFile(path.join(__dirname,q.params.f)):r.sendStatus(404));
 init().then(()=>app.listen(process.env.PORT||3000,()=>console.log('Nafa Finance prêt'))).catch(e=>{console.error(e);process.exit(1)});
