@@ -1,7 +1,7 @@
 const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken');
 const S=process.env.JWT_SECRET;if(!S){console.error('JWT_SECRET manquant');process.exit(1)}
 const db=process.env.DATABASE_URL;
-const pool=new Pool({connectionString:db,options:'-c search_path=nafa',ssl:db&&!/localhost|127\.0\.0\.1/.test(db)?{rejectUnauthorized:false}:false});
+const pool=new Pool({connectionString:db,options:'-c search_path=nafa',ssl:db&&!/localhost|127\.0\.0\.1/.test(db)?{rejectUnauthorized:false}:false,connectionTimeoutMillis:10000,query_timeout:15000});
 const q=(t,p)=>pool.query(t,p);
 const app=express();app.use(express.json({limit:'100kb'}));
 const h=f=>(req,res)=>f(req,res).catch(e=>{console.error(e);res.status(500).json({error:'Erreur serveur'})});
@@ -9,12 +9,19 @@ const auth=role=>(req,res,next)=>{try{const t=(req.headers.authorization||'').sl
 const tok=u=>jwt.sign({id:u.id,role:u.role},S,{expiresIn:'7d'});
 const ph=s=>String(s||'').replace(/[^\d+]/g,'');
 async function init(){
+ console.log('Démarrage Nafa Finance : vérification de la base PostgreSQL');
+ if(!db){throw new Error('DATABASE_URL manquant dans les variables Render');}
+ await q('SELECT 1');
+ console.log('Connexion PostgreSQL établie');
  await q('CREATE SCHEMA IF NOT EXISTS nafa');
+ console.log('Schéma nafa vérifié');
  await q(`CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,name TEXT NOT NULL,phone TEXT UNIQUE NOT NULL,pass TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'member',birth TEXT,sex TEXT,created TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS groups(id SERIAL PRIMARY KEY,name TEXT NOT NULL,members INT DEFAULT 0,amount INT NOT NULL);
  CREATE TABLE IF NOT EXISTS payments(id SERIAL PRIMARY KEY,user_id INT REFERENCES users(id),group_id INT REFERENCES groups(id),amount INT NOT NULL,fee INT NOT NULL,method TEXT,status TEXT NOT NULL DEFAULT 'pending',created TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS notifications(id SERIAL PRIMARY KEY,title TEXT,body TEXT,created TIMESTAMPTZ DEFAULT now());`);
+ console.log('Tables vérifiées');
  await q('ALTER TABLE groups ADD COLUMN IF NOT EXISTS whatsapp_url TEXT');
+ console.log('Colonne WhatsApp vérifiée');
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
  if(process.env.ADMIN_PHONE&&process.env.ADMIN_PASSWORD)await q("INSERT INTO users(name,phone,pass,role) VALUES('Administrateur',$1,$2,'admin') ON CONFLICT(phone) DO UPDATE SET role='admin',pass=$2",[ph(process.env.ADMIN_PHONE),await bcrypt.hash(process.env.ADMIN_PASSWORD,10)]);
 }
