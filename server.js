@@ -22,6 +22,8 @@ async function init(){
  CREATE TABLE IF NOT EXISTS payouts(id SERIAL PRIMARY KEY,group_id INT REFERENCES groups(id),beneficiary TEXT NOT NULL,amount INT NOT NULL,method TEXT,status TEXT NOT NULL DEFAULT 'pending',due_date DATE,paid_at TIMESTAMPTZ,created TIMESTAMPTZ DEFAULT now());
  ALTER TABLE payouts ADD COLUMN IF NOT EXISTS beneficiary TEXT;
  ALTER TABLE payouts ADD COLUMN IF NOT EXISTS method TEXT;
+ ALTER TABLE payouts ADD COLUMN IF NOT EXISTS due_date DATE;
+ ALTER TABLE payouts ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
  CREATE TABLE IF NOT EXISTS messages(id SERIAL PRIMARY KEY,kind TEXT NOT NULL,title TEXT,body TEXT,group_id INT,ref TEXT,created TIMESTAMPTZ DEFAULT now());`);
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
  if(process.env.ADMIN_PHONE&&process.env.ADMIN_PASSWORD)await q("INSERT INTO users(name,phone,pass,role) VALUES('Administrateur',$1,$2,'admin') ON CONFLICT(phone) DO UPDATE SET role='admin'",[ph(process.env.ADMIN_PHONE),await bcrypt.hash(process.env.ADMIN_PASSWORD,10)]);
