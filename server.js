@@ -27,7 +27,27 @@ async function init(){
  ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
  ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by INT REFERENCES users(id);
  CREATE TABLE IF NOT EXISTS member_documents(id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,doc_type TEXT NOT NULL,file_name TEXT NOT NULL,mime_type TEXT NOT NULL,file_data TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created TIMESTAMPTZ DEFAULT now());
- CREATE TABLE IF NOT EXISTS member_support_requests(id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,subject TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',admin_response TEXT,created TIMESTAMPTZ DEFAULT now(),updated TIMESTAMPTZ DEFAULT now());`);
+ CREATE TABLE IF NOT EXISTS member_support_requests(id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,subject TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',admin_response TEXT,created TIMESTAMPTZ DEFAULT now(),updated TIMESTAMPTZ DEFAULT now());
+ DO $nafa_text_migration$
+ DECLARE c record;
+ BEGIN
+   FOR c IN
+     SELECT table_name,column_name,data_type
+     FROM information_schema.columns
+     WHERE table_schema='nafa'
+       AND ((table_name='settings' AND column_name='value')
+         OR (table_name='payouts' AND column_name IN ('beneficiary','method')))
+       AND data_type IN ('json','jsonb')
+   LOOP
+     IF c.data_type='json' THEN
+       EXECUTE format('ALTER TABLE nafa.%I ALTER COLUMN %I TYPE text USING CASE WHEN json_typeof(%I) = ''string'' THEN %I #>> ''{}'' ELSE %I::text END',
+         c.table_name,c.column_name,c.column_name,c.column_name,c.column_name);
+     ELSE
+       EXECUTE format('ALTER TABLE nafa.%I ALTER COLUMN %I TYPE text USING CASE WHEN jsonb_typeof(%I) = ''string'' THEN %I #>> ''{}'' ELSE %I::text END',
+         c.table_name,c.column_name,c.column_name,c.column_name,c.column_name);
+     END IF;
+   END LOOP;
+ END $nafa_text_migration$;`);
  await q("UPDATE users SET referral_code='NF-'||lpad(id::text,6,'0') WHERE referral_code IS NULL");
  await q('CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uidx ON users(referral_code)');
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
