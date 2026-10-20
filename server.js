@@ -177,6 +177,13 @@ app.get('/api/admin/overview',adm,h(async(req,res)=>{const Q=req.query,F=fw(Q,'p
  const nt=await q("SELECT (SELECT count(*) FROM payments WHERE status='pending')::int AS pay,(SELECT count(*) FROM users WHERE role='member' AND status='pending')::int AS mem,(SELECT count(*) FROM payouts WHERE status='pending')::int AS po");
  res.json({kpi:{validated:cur,pending:pend,prevValidated:pv,prevPending:pp,toPrepare:prep,balance:cur-paid},months:{pay:mp.rows,out:mo.rows},status:st,latest:await journal(Q,10),badge:nt.rows[0]})}));
 app.get('/api/admin/journal',adm,h(async(req,res)=>res.json(await journal(req.query,500))));
+app.get('/api/admin/powerbi/export.csv',adm,h(async(req,res)=>{
+ const r=await q("SELECT created::date::text AS date, 'Cotisation'::text AS operation, g.name AS groupe, p.method AS moyen, p.amount::int AS montant_fcfa, p.status AS statut FROM payments p JOIN groups g ON g.id=p.group_id UNION ALL SELECT o.created::date::text AS date, 'Versement'::text AS operation, g.name AS groupe, o.method AS moyen, o.amount::int AS montant_fcfa, CASE o.status WHEN 'paid' THEN 'validated' ELSE o.status END AS statut FROM payouts o JOIN groups g ON g.id=o.group_id ORDER BY date DESC");
+ const csvCell=v=>{const x=String(v==null?'':v);return /[",\\r\\n;]/.test(x)?'"'+x.replace(/"/g,'""')+'"':x};
+ const rows=[['Date','Operation','Groupe','Moyen de paiement','Montant FCFA','Statut'],...r.rows.map(x=>[x.date,x.operation,x.groupe,x.moyen,x.montant_fcfa,x.statut])];
+ const csv='\\uFEFF'+rows.map(row=>row.map(csvCell).join(';')).join('\\r\\n');
+ res.set('Content-Type','text/csv; charset=utf-8').set('Content-Disposition','attachment; filename="nafa-finance-powerbi.csv"').set('Cache-Control','no-store').send(csv);
+}));
 app.get('/api/admin/payouts',adm,h(async(req,res)=>res.json((await q('SELECT o.id,o.group_id,o.beneficiary,o.amount,o.method,o.status,o.due_date::text AS due_date,o.created,o.paid_at,g.name AS group_name FROM payouts o JOIN groups g ON g.id=o.group_id ORDER BY o.id DESC LIMIT 300')).rows)));
 app.post('/api/admin/payouts',adm,h(async(req,res)=>{const b=req.body,amount=parseInt(b.amount,10),gid=parseInt(b.group_id,10)||0;
  if(!(await q('SELECT 1 FROM groups WHERE id=$1',[gid])).rowCount||!String(b.beneficiary||'').trim()||!(amount>=100)||!['Orange Money','MTN Money','Wave','Moov Money'].includes(b.method))return res.status(400).json({error:'Groupe, bénéficiaire, montant (100 FCFA min.) et moyen requis'});
