@@ -80,8 +80,15 @@ app.get('/api/groups',auth(),h(async(req,res)=>res.json((await q('SELECT id,name
 app.get('/api/my-whatsapp-groups',auth(),h(async(req,res)=>res.json((await q("SELECT DISTINCT g.id,g.name,g.whatsapp FROM groups g JOIN payments p ON p.group_id=g.id WHERE p.user_id=$1 AND p.status IN ('pending','validated') AND g.whatsapp IS NOT NULL AND g.whatsapp<>'' ORDER BY g.name",[req.u.id])).rows)));
 app.post('/api/pay',auth(),h(async(req,res)=>{const amount=parseInt(req.body.amount,10),gid=parseInt(req.body.group_id,10),method=String(req.body.method||'');
  if(!(amount>=100&&amount<=1000000)||!['Orange Money','MTN Money','Wave','Moov Money'].includes(method)||!(await q('SELECT 1 FROM groups WHERE id=$1',[gid])).rowCount)return res.status(400).json({error:'Montant (min. 100 FCFA), groupe et moyen de paiement requis'});
- const fee=Math.round(amount*0.02);const auto=(await S2('auto_pay'))==='1';await q("INSERT INTO payments(user_id,group_id,amount,fee,method,status,validated_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6::text='validated' THEN now() END)",[req.u.id,gid,amount,fee,method,auto?'validated':'pending']);
- await q('INSERT INTO notifications(title,body) VALUES($1,$2)',['Paiement reçu',method+' · '+amount+' FCFA']);res.json({ok:true,total:amount+fee})}));
+ // Commissions uniquement lors de la première cotisation. Aucune demande n'est validée automatiquement sans confirmation du fournisseur.
+ const prior=await q("SELECT 1 FROM payments WHERE user_id=$1 AND status IN ('pending','validated') LIMIT 1",[req.u.id]);
+ const first=prior.rowCount===0;
+ const ref=await q("SELECT referred_by FROM users WHERE id=$1 AND role='member'",[req.u.id]);
+ const hasRef=!!(ref.rowCount&&ref.rows[0].referred_by);
+ const fee=first?(Math.round(amount*0.01)+(hasRef?Math.round(amount*0.01):0)):0;
+ await q("INSERT INTO payments(user_id,group_id,amount,fee,method,status,validated_at) VALUES($1,$2,$3,$4,$5,'pending',NULL)",[req.u.id,gid,amount,fee,method]);
+ await q('INSERT INTO notifications(title,body) VALUES($1,$2)',['Demande de cotisation enregistrée',method+' · '+amount+' FCFA · en attente de vérification']);
+ res.json({ok:true,total:amount+fee,fee,status:'pending',first_cotisation:first})}));
 app.get('/api/transactions',auth(),h(async(req,res)=>res.json((await q('SELECT p.id,p.amount,p.fee,p.method,p.status,p.created,g.name AS group_name FROM payments p JOIN groups g ON g.id=p.group_id WHERE p.user_id=$1 ORDER BY p.id DESC LIMIT 100',[req.u.id])).rows)));
 app.get('/api/my-notifications',auth(),h(async(req,res)=>{const r=await q('SELECT p.status,p.amount,p.method,p.created,g.name AS group_name FROM payments p JOIN groups g ON g.id=p.group_id WHERE p.user_id=$1 ORDER BY p.id DESC LIMIT 50',[req.u.id]);const T={pending:'Paiement en attente',validated:'Paiement validé',refused:'Paiement refusé'};
  const m=await q('SELECT kind,title,body,created FROM messages WHERE group_id IS NULL OR group_id IN (SELECT group_id FROM payments WHERE user_id=$1) ORDER BY id DESC LIMIT 30',[req.u.id]);
@@ -120,7 +127,7 @@ app.get('/api/admin/pay',adm,h(async(req,res)=>{const w=[],p=[];const u=parseInt
  res.json(r.rows.map(x=>({...x,receipt:rcpt(x.id)})))}));
 app.get('/api/admin/pay/:id',adm,h(async(req,res)=>{const r=await q('SELECT p.id,p.group_id,p.amount,p.fee,p.method,p.status,p.created,p.validated_at,u.name,u.phone,g.name AS group_name FROM payments p JOIN users u ON u.id=p.user_id JOIN groups g ON g.id=p.group_id WHERE p.id=$1',[parseInt(req.params.id,10)||0]);
  if(!r.rowCount)return res.status(404).json({error:'Reçu introuvable'});res.json({...r.rows[0],receipt:rcpt(r.rows[0].id)})}));
-app.post('/api/admin/payments-validate-all',adm,h(async(req,res)=>{const r=await q("UPDATE payments SET status='validated',validated_at=now() WHERE status='pending'");res.json({count:r.rowCount})}));
+app.post('/api/admin/payments-validate-all',adm,h(async(req,res)=>res.status(403).json({error:'La validation groupée est désactivée. Vérifiez chaque paiement individuellement après confirmation effective du transfert.'})));
 app.get('/api/admin/groups',adm,h(async(req,res)=>res.json((await q('SELECT id,name,members,amount,end_date::text AS end_date,whatsapp FROM groups ORDER BY id')).rows)));
 app.post('/api/admin/groups',adm,h(async(req,res)=>{const b=req.body,amount=parseInt(b.amount,10);
  if(!b.name||!(amount>=100))return res.status(400).json({error:'Nom et cotisation (100 FCFA min.) requis'});
