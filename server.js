@@ -48,6 +48,9 @@ async function init(){
      END IF;
    END LOOP;
  END $nafa_text_migration$;`);
+ await q("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS scheduled_for DATE");
+ await q("UPDATE payouts SET scheduled_for=COALESCE(scheduled_for,due_date,created::date,current_date) WHERE scheduled_for IS NULL");
+ await q("ALTER TABLE payouts ALTER COLUMN scheduled_for SET NOT NULL");
  await q("UPDATE users SET referral_code='NF-'||lpad(id::text,6,'0') WHERE referral_code IS NULL");
  await q('CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uidx ON users(referral_code)');
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
@@ -177,7 +180,7 @@ app.get('/api/admin/journal',adm,h(async(req,res)=>res.json(await journal(req.qu
 app.get('/api/admin/payouts',adm,h(async(req,res)=>res.json((await q('SELECT o.id,o.group_id,o.beneficiary,o.amount,o.method,o.status,o.due_date::text AS due_date,o.created,o.paid_at,g.name AS group_name FROM payouts o JOIN groups g ON g.id=o.group_id ORDER BY o.id DESC LIMIT 300')).rows)));
 app.post('/api/admin/payouts',adm,h(async(req,res)=>{const b=req.body,amount=parseInt(b.amount,10),gid=parseInt(b.group_id,10)||0;
  if(!(await q('SELECT 1 FROM groups WHERE id=$1',[gid])).rowCount||!String(b.beneficiary||'').trim()||!(amount>=100)||!['Orange Money','MTN Money','Wave','Moov Money'].includes(b.method))return res.status(400).json({error:'Groupe, bénéficiaire, montant (100 FCFA min.) et moyen requis'});
- await q('INSERT INTO payouts(group_id,beneficiary,amount,method,due_date) VALUES($1,$2,$3,$4,$5)',[gid,String(b.beneficiary).trim().slice(0,120),amount,b.method,DRX.test(b.due_date||'')?b.due_date:null]);res.json({ok:true})}));
+ await q("INSERT INTO payouts(group_id,beneficiary,amount,method,due_date,scheduled_for,status) VALUES($1,$2,$3,$4,$5,COALESCE($5::date,CURRENT_DATE),'pending')",[gid,String(b.beneficiary).trim().slice(0,120),amount,b.method,DRX.test(b.due_date||'')?b.due_date:null]);res.json({ok:true})}));
 app.post('/api/admin/payouts/:id/:act',adm,h(async(req,res)=>{const st={pay:'paid',cancel:'cancelled'}[req.params.act];if(!st)return res.status(404).json({error:'Action inconnue'});
  const r=await q("UPDATE payouts SET status=$1,paid_at=CASE WHEN $1::text='paid' THEN now() END WHERE id=$2 AND status='pending' RETURNING id",[st,parseInt(req.params.id,10)||0]);if(!r.rowCount)return res.status(409).json({error:'Versement déjà traité'});res.json({ok:true})}));
 app.get('/api/admin/commissions',adm,h(async(req,res)=>{const F=fw(req.query,'p','p.created');res.json((await q("SELECT to_char(date_trunc('month',p.created),'YYYY-MM') AS m,coalesce(sum(p.fee),0)::int AS fee,count(*)::int AS n FROM payments p WHERE p.status='validated'"+AND(F.w)+' GROUP BY 1 ORDER BY 1',F.p)).rows)}));
