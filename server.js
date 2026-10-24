@@ -227,7 +227,7 @@ app.post('/api/admin/groups',adm,h(async(req,res)=>{const b=req.body,amount=pars
 app.delete('/api/admin/groups/:id',adm,h(async(req,res)=>{const id=parseInt(req.params.id,10)||0;
  if((await q('SELECT 1 FROM payments WHERE group_id=$1 LIMIT 1',[id])).rowCount)return res.status(409).json({error:'Ce groupe a déjà des paiements : suppression impossible'});
  await q('DELETE FROM groups WHERE id=$1',[id]);res.json({ok:true})}));
-app.get('/api/info',adm,h(async(req,res)=>res.json({orange:await S2('manager_orange'),mtn:await S2('manager_mtn'),moov:await S2('manager_moov'),wave_orange:await S2('manager_wave_orange'),wave_mtn:await S2('manager_wave_mtn'),wave_moov:await S2('manager_wave_moov')})));
+app.get('/api/info',auth(),h(async(req,res)=>res.json({orange:await S2('manager_orange'),mtn:await S2('manager_mtn'),moov:await S2('manager_moov'),wave_orange:await S2('manager_wave_orange'),wave_mtn:await S2('manager_wave_mtn'),wave_moov:await S2('manager_wave_moov')})));
 const KEYS=['auto_pay','auto_register','reminders_on','reminder_days','manager_orange','manager_mtn','manager_moov','manager_wave_orange','manager_wave_mtn','manager_wave_moov'];
 app.get('/api/admin/settings',adm,h(async(req,res)=>{const o={};for(const k of KEYS)o[k]=await S2(k);res.json(o)}));
 app.post('/api/admin/settings',adm,h(async(req,res)=>{for(const k of KEYS)if(k in req.body){let v=String(req.body[k]);v=k==='reminder_days'?String(Math.min(30,Math.max(1,parseInt(v,10)||3))):k.startsWith('manager_')?v.replace(/[^0-9+ ]/g,'').slice(0,20):(v==='1'?'1':'0');
