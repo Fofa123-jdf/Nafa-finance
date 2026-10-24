@@ -58,7 +58,8 @@ async function init(){
      END IF;
    END LOOP;
  END $nafa_text_migration$;`);
- await q("DELETE FROM payments WHERE status = 'test_validated' OR provider_mode = 'simulation' OR provider_reference LIKE 'TESTWAVE-%'");
+ const cleanedTestPayments=await q("DELETE FROM payments WHERE status = 'test_validated' OR provider_mode = 'simulation' OR provider_reference LIKE 'TESTWAVE-%'");
+ console.log('Nettoyage des paiements de simulation : '+cleanedTestPayments.rowCount+' ligne(s) supprimée(s).');
  await q("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS scheduled_for DATE");
  await q("UPDATE payouts SET scheduled_for=COALESCE(scheduled_for,due_date,created::date,current_date) WHERE scheduled_for IS NULL");
  await q("ALTER TABLE payouts ALTER COLUMN scheduled_for SET NOT NULL");
