@@ -9,38 +9,7 @@ app.disable('x-powered-by');
 app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');res.set('X-Frame-Options','DENY');res.set('Referrer-Policy','strict-origin-when-cross-origin');res.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');if(req.secure||req.headers['x-forwarded-proto']==='https')res.set('Strict-Transport-Security','max-age=31536000; includeSubDomains');if(req.path.startsWith('/api/'))res.set('Cache-Control','no-store');next()});
 app.use(express.json({limit:'5mb'}));
 const h=f=>(req,res)=>f(req,res).catch(e=>{console.error(e);res.status(500).json({error:'Erreur serveur'})});
-function adminRouteAllowed(role,method,path){
- if(role==='admin')return true;
- const p=path.startsWith('/api/admin')?path.slice(10)||'/':path;
- const m=String(method||'GET').toUpperCase();
- const s=p.split('/').filter(Boolean);
- const numeric=x=>x!==undefined&&x!==''&&Number.isInteger(Number(x))&&Number(x)>0;
- if(role==='manager'){
-  if(m==='GET'&&['/stats','/members','/dashboard','/people','/groups','/notifications','/messages','/support','/member-documents'].includes(p))return true;
-  if(m==='GET'&&s.length===3&&s[0]==='member-documents'&&numeric(s[1])&&s[2]==='content')return true;
-  if(m==='POST'&&s.length===2&&s[0]==='people'&&numeric(s[1]))return true;
-  if(m==='POST'&&['/groups','/messages'].includes(p))return true;
-  if(m==='DELETE'&&s.length===2&&s[0]==='groups'&&numeric(s[1]))return true;
-  if(m==='POST'&&s.length===2&&s[0]==='support'&&numeric(s[1]))return true;
-  if(m==='POST'&&s.length===3&&s[0]==='member-documents'&&numeric(s[1])&&['validate','refuse'].includes(s[2]))return true;
-  return false;
- }
- if(role==='accountant'){
-  if(m==='GET'&&['/stats','/dashboard','/members','/people','/payments','/pay','/overview','/journal','/powerbi/export.csv','/payouts','/commissions','/crosstab','/groups','/notifications'].includes(p))return true;
-  if(m==='GET'&&s.length===2&&s[0]==='pay'&&numeric(s[1]))return true;
-  if(m==='POST'&&s.length===3&&s[0]==='payments'&&numeric(s[1])&&['validate','refuse'].includes(s[2]))return true;
-  if(m==='POST'&&p==='/payouts')return true;
-  if(m==='POST'&&s.length===3&&s[0]==='payouts'&&numeric(s[1])&&s[2]==='cancel')return true;
-  return false;
- }
- if(role==='auditor'){
-  return m==='GET'&&(
-   ['/stats','/dashboard','/payments','/pay','/overview','/journal','/powerbi/export.csv','/commissions','/crosstab','/groups','/audit-log'].includes(p)||
-   (s.length===2&&s[0]==='pay'&&numeric(s[1]))
-  );
- }
- return false;
-}
+const {adminRouteAllowed}=require('./access-control');
 const auth=role=>(req,res,next)=>{
  let tokenUser;
  try{
