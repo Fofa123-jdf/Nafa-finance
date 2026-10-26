@@ -94,6 +94,15 @@ async function init(){
  await q("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS scheduled_for DATE");
  await q("UPDATE payouts SET scheduled_for=COALESCE(scheduled_for,due_date,created::date,current_date) WHERE scheduled_for IS NULL");
  await q("ALTER TABLE payouts ALTER COLUMN scheduled_for SET NOT NULL");
+ await q(`CREATE INDEX IF NOT EXISTS payments_status_created_idx ON payments(status,created DESC);
+ CREATE INDEX IF NOT EXISTS payments_user_status_idx ON payments(user_id,status);
+ CREATE INDEX IF NOT EXISTS payments_group_created_idx ON payments(group_id,created DESC);
+ CREATE INDEX IF NOT EXISTS payouts_status_created_idx ON payouts(status,created DESC);
+ CREATE INDEX IF NOT EXISTS payouts_group_created_idx ON payouts(group_id,created DESC);
+ CREATE INDEX IF NOT EXISTS users_role_status_created_idx ON users(role,status,created DESC);
+ CREATE INDEX IF NOT EXISTS messages_group_created_idx ON messages(group_id,created DESC);
+ CREATE INDEX IF NOT EXISTS member_documents_status_created_idx ON member_documents(status,created DESC);
+ CREATE INDEX IF NOT EXISTS member_support_status_updated_idx ON member_support_requests(status,updated DESC)`);
  await q("UPDATE users SET referral_code='NF-'||lpad(id::text,6,'0') WHERE referral_code IS NULL");
  await q('CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uidx ON users(referral_code)');
  if(!(await q('SELECT 1 FROM groups LIMIT 1')).rowCount)for(const g of [['Groupe Solidarité',12,500],['Groupe Projets',18,1000],['Traoré Épargne Plus',15,1000],['Groupe Avenir',10,2000],['Groupe Famille',8,5000]])await q('INSERT INTO groups(name,members,amount) VALUES($1,$2,$3)',g);
