@@ -32,3 +32,47 @@ Orange doit d’abord autoriser l’accès à l’API et fournir les identifiant
 - **MTN MoMo, Wave et Moov Money** : parcours d’API officielle non encore intégré. L’application affiche un message et n’enregistre pas une cotisation qui n’a pas été transmise au prestataire.
 - **Versements sortants** : à intégrer et tester séparément, avec confirmations finales et contrôles des bénéficiaires.
 - Aucun test technique ne constitue une autorisation de collecter, conserver ou redistribuer des fonds réels.
+
+
+## Administration sécurisée (branche de préparation)
+
+L'administration s'appuie sur la même API et la même base PostgreSQL que l'application membre. Les changements de sécurité sont préparés sur `feature/secure-admin-roles` et ne sont pas publiés sur `main` par cette opération.
+
+### Rôles
+
+- `admin` : administrateur principal, accès complet et gestion de l'équipe.
+- `manager` : membres, groupes, rappels, support et documents autorisés.
+- `accountant` : lectures financières, rapports, commissions et préparation des versements. Les validations de cotisation déclenchent une vérification auprès du prestataire ; elles ne peuvent pas simplement forcer le statut.
+- `auditor` : lecture seule des rapports financiers et du journal d'audit.
+
+Les contrôles de rôle sont effectués dans l'API, pas seulement dans le menu de l'interface. Chaque requête protégée vérifie aussi en base le statut et le rôle actuels du compte. Les versions de session permettent de révoquer les sessions du personnel après changement de rôle, désactivation ou réinitialisation du mot de passe.
+
+### Journal et protection
+
+- Le journal `admin_audit_log` conserve l'identité de l'acteur, le rôle, la méthode, le chemin, le résultat HTTP et l'heure ; il ne stocke pas les mots de passe ni les corps de requête.
+- Les en-têtes de protection HTTP sont ajoutés et les réponses API portent `Cache-Control: no-store`.
+- Les connexions PostgreSQL et les délais des requêtes sont limités pour éviter que des opérations bloquées immobilisent le serveur.
+- Les tentatives de connexion répétées à un même numéro sont temporairement limitées.
+- Les cotisations en attente ne peuvent pas être validées à la main sans vérification du prestataire configuré.
+- `GET /api/health` vérifie la connexion à la base sans exposer de données personnelles.
+
+### Tests
+
+Exécuter `npm test` pour lancer les tests automatiques de la politique des rôles avec le test runner intégré à Node.js.
+
+
+### Suivi des commissions et cotisations concurrentes
+
+- La première cotisation confirmée peut enregistrer une commission de 1 % pour l’administration et une commission additionnelle de 1 % pour un parrain existant. Les cotisations suivantes ne créent pas ces commissions.
+- La commission d’administration, celle du parrain et l’identifiant du parrain sont conservés séparément sur chaque nouvelle opération. Les états non confirmés ne sont pas comptés comme commissions acquises.
+- Un verrou transactionnel par membre et un contrôle des cotisations en attente limitent les créations concurrentes susceptibles d’appliquer plusieurs fois la règle de première cotisation.
+- Les frais des anciens paiements demeurent visibles dans la catégorie « historique non ventilé » : l’application ne devine pas rétroactivement quel parrain aurait reçu une commission.
+- Le tableau récapitulatif indique les commissions attribuées, mais ne signifie pas que l’argent a été versé. Les versements aux parrains exigent encore une procédure distincte avec contrôles et confirmation.
+
+### Avant le passage en production
+
+1. Exécuter les tests et vérifier le déploiement de prévisualisation.
+2. Vérifier la configuration des sauvegardes PostgreSQL et réaliser un test de restauration.
+3. Configurer les clés et URL officielles des prestataires uniquement dans les variables d'environnement de Render.
+4. Tester les paiements en sandbox et séparer les données de test des données réelles.
+5. Obtenir les approbations juridiques, réglementaires et marchandes nécessaires avant d'encaisser ou de redistribuer des fonds.
