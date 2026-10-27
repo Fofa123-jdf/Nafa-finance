@@ -2,7 +2,10 @@ const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs')
 const {isOrangeMoneyConfigured,createOrangePayment,checkOrangePayment,classifyOrangeStatus}=require('./orange-money');
 const S=process.env.JWT_SECRET;if(!S){console.error('JWT_SECRET manquant');process.exit(1)}
 const db=process.env.DATABASE_URL;
-const pool=new Pool({connectionString:db,options:'-c search_path=nafa',ssl:db&&!/localhost|127\.0\.0\.1/.test(db)?{rejectUnauthorized:false}:false});
+const pool=new Pool({connectionString:db,ssl:db&&!/localhost|127\.0\.0\.1/.test(db)?{rejectUnauthorized:false}:false});
+pool.on('connect',client=>{
+ client.query('SET search_path TO nafa, public').catch(e=>console.error('Erreur configuration search_path PostgreSQL:',e.message));
+});
 const q=(t,p)=>pool.query(t,p);
 const app=express();app.use(express.json({limit:'5mb'}));
 const h=f=>(req,res)=>f(req,res).catch(e=>{console.error(e);res.status(500).json({error:'Erreur serveur'})});
