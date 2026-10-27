@@ -46,7 +46,7 @@ try {
         throw "Le fichier de sauvegarde est absent ou vide."
     }
 
-    $archiveList = & $pgRestore.Source --list $backupPath
+    $archiveList = @(& $pgRestore.Source --list $backupPath)
     if ($LASTEXITCODE -ne 0 -or -not $archiveList -or $archiveList.Count -lt 2) {
         throw "Le fichier a été créé mais sa vérification a échoué. Ne le considérez pas comme une sauvegarde valide."
     }
