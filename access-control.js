@@ -41,7 +41,7 @@ function adminRouteAllowed(role, method, path) {
     if (m === 'GET' && [
       '/stats', '/dashboard', '/members', '/people', '/payments', '/pay',
       '/overview', '/journal', '/powerbi/export.csv', '/payouts',
-      '/commissions', '/crosstab', '/groups', '/notifications'
+      '/commissions', '/referral-commissions', '/crosstab', '/groups', '/notifications'
     ].includes(p)) return true;
     if (m === 'GET' && segments.length === 2 &&
         segments[0] === 'pay' && numericId(segments[1])) return true;
@@ -59,7 +59,7 @@ function adminRouteAllowed(role, method, path) {
     return m === 'GET' && (
       [
         '/stats', '/dashboard', '/payments', '/pay', '/overview', '/journal',
-        '/powerbi/export.csv', '/commissions', '/crosstab', '/groups', '/audit-log'
+        '/powerbi/export.csv', '/commissions', '/referral-commissions', '/crosstab', '/groups', '/audit-log'
       ].includes(p) ||
       (segments.length === 2 && segments[0] === 'pay' && numericId(segments[1]))
     );
