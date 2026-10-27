@@ -10,6 +10,7 @@ app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');res.set('X-
 app.use(express.json({limit:'5mb'}));
 const h=f=>(req,res)=>f(req,res).catch(e=>{console.error(e);res.status(500).json({error:'Erreur serveur'})});
 const {adminRouteAllowed}=require('./access-control');
+const {calculateContributionCommission}=require('./commission-policy');
 const {statsForAdmin,dashboardForAdmin,peopleForAdmin}=require('./admin-view');
 const auth=role=>(req,res,next)=>{
  let tokenUser;
@@ -59,6 +60,9 @@ async function init(){
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_status TEXT;
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_mode TEXT;
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_checked_at TIMESTAMPTZ;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS admin_fee INT;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS referral_fee INT;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS referrer_user_id INT REFERENCES users(id);
  CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_reference_uidx ON payments(provider_reference) WHERE provider_reference IS NOT NULL;
  CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
  CREATE TABLE IF NOT EXISTS payouts(id SERIAL PRIMARY KEY,group_id INT REFERENCES groups(id),beneficiary TEXT NOT NULL,amount INT NOT NULL,method TEXT,status TEXT NOT NULL DEFAULT 'pending',due_date DATE,paid_at TIMESTAMPTZ,created TIMESTAMPTZ DEFAULT now());
@@ -146,14 +150,15 @@ app.post('/api/my-preferences',auth(),h(async(req,res)=>{const b=req.body||{},la
 app.get('/api/groups',auth(),h(async(req,res)=>res.json((await q('SELECT id,name,members,amount,end_date FROM groups ORDER BY id')).rows)));
 app.get('/api/my-whatsapp-groups',auth(),h(async(req,res)=>{const solidarityLink='https://chat.whatsapp.com/Hfc8WHRBiBIJXoH9x5jXdI';const r=await q("SELECT DISTINCT g.id,g.name,CASE WHEN lower(g.name) LIKE '%solidarit%' THEN $2 ELSE g.whatsapp END AS whatsapp FROM groups g JOIN payments p ON p.group_id=g.id WHERE p.user_id=$1 AND p.status IN ('pending','validated') AND ((g.whatsapp IS NOT NULL AND g.whatsapp<>'') OR lower(g.name) LIKE '%solidarit%') ORDER BY g.name",[req.u.id,solidarityLink]);res.json(r.rows)}));
 
-async function getContributionQuote(userId, amount) {
- const prior=await q("SELECT 1 FROM payments WHERE user_id=$1 AND status='validated' LIMIT 1",[userId]);
+async function getContributionQuote(userId, amount, query=q) {
+ const prior=await query("SELECT 1 FROM payments WHERE user_id=$1 AND status='validated' LIMIT 1",[userId]);
  const first=prior.rowCount===0;
- const member=await q("SELECT referred_by FROM users WHERE id=$1 AND role='member'",[userId]);
+ const member=await query("SELECT referred_by FROM users WHERE id=$1 AND role='member'",[userId]);
  if(!member.rowCount)throw new Error('Compte membre introuvable');
- const hasRef=!!member.rows[0].referred_by;
- const fee=first?(Math.round(amount*0.01)+(hasRef?Math.round(amount*0.01):0)):0;
- return {amount,fee,total:amount+fee,first_cotisation:first,has_referrer:hasRef};
+ const referrerId=member.rows[0].referred_by==null?null:Number(member.rows[0].referred_by);
+ const hasRef=!!referrerId;
+ const commission=calculateContributionCommission(amount,first,referrerId);
+ return {amount,...commission,total:amount+commission.fee,first_cotisation:first,has_referrer:hasRef};
 }
 async function syncOrangePaymentStatus(payment) {
  const providerData=await checkOrangePayment({
@@ -168,23 +173,44 @@ async function syncOrangePaymentStatus(payment) {
 app.post('/api/pay/quote',auth('member'),h(async(req,res)=>{
  const amount=parseInt(req.body.amount,10);
  if(!(amount>=100&&amount<=1000000))return res.status(400).json({error:'Le montant doit être compris entre 100 et 1 000 000 FCFA.'});
+ const pending=await q("SELECT 1 FROM payments WHERE user_id=$1 AND status='pending' LIMIT 1",[req.u.id]);
+ if(pending.rowCount)return res.status(409).json({error:'Une cotisation est déjà en attente. Vérifiez son statut avant d’en créer une nouvelle.'});
  const quote=await getContributionQuote(req.u.id,amount);
- res.json(quote);
+ res.json({amount:quote.amount,fee:quote.fee,total:quote.total,first_cotisation:quote.first_cotisation,has_referrer:quote.has_referrer,admin_fee:quote.admin_fee,referral_fee:quote.referral_fee});
 }));
 app.post('/api/pay',auth('member'),h(async(req,res)=>{
  const amount=parseInt(req.body.amount,10),gid=parseInt(req.body.group_id,10),method=String(req.body.method||'');
  if(!(amount>=100&&amount<=1000000)||!['Orange Money','MTN Money','Wave','Moov Money'].includes(method)||!(await q('SELECT 1 FROM groups WHERE id=$1',[gid])).rowCount)return res.status(400).json({error:'Montant (min. 100 FCFA), groupe et moyen de paiement requis.'});
  if(method!=='Orange Money')return res.status(503).json({error:'Le paiement '+method+' n’est pas encore relié à une API officielle. Aucun paiement n’a été transmis et aucune cotisation n’a été créée.'});
  if(!isOrangeMoneyConfigured())return res.status(503).json({error:'Orange Money n’est pas encore configuré avec les accès officiels du mode test. Aucun paiement n’a été lancé et aucune cotisation n’a été créée.'});
- const quote=await getContributionQuote(req.u.id,amount);
- const quotedTotal=Number(req.body.quoted_total);
- if(Number.isFinite(quotedTotal)&&quotedTotal>0&&quotedTotal!==quote.total)return res.status(409).json({error:'Le montant total a changé. Vérifiez le total affiché avant de relancer le paiement.'});
  let publicBase;
  try{publicBase=new URL(String(process.env.PUBLIC_BASE_URL||'https://nafa-finance.onrender.com'));if(publicBase.protocol!=='https:')throw new Error('HTTPS requis');publicBase=publicBase.origin}
  catch(e){return res.status(500).json({error:'L’URL publique sécurisée de NAFA FINANCE doit être configurée.'})}
- const orderId='NF'+Date.now().toString(36).toUpperCase()+crypto.randomBytes(4).toString('hex').toUpperCase();
- const created=await q("INSERT INTO payments(user_id,group_id,amount,fee,method,status,validated_at,provider_reference,provider_mode,provider_status) VALUES($1,$2,$3,$4,$5,'pending',NULL,$6,$7,'initializing') RETURNING id",[req.u.id,gid,amount,quote.fee,method,orderId,String(process.env.ORANGE_MONEY_MODE||'sandbox').toLowerCase()]);
- const paymentId=created.rows[0].id;
+ let client=null,paymentId=null,quote=null,orderId=null;
+ try{
+  client=await pool.connect();
+  await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock($1::bigint)',[req.u.id]);
+  const pending=await client.query("SELECT id FROM payments WHERE user_id=$1 AND status='pending' LIMIT 1",[req.u.id]);
+  if(pending.rowCount){
+   await client.query('ROLLBACK');
+   return res.status(409).json({error:'Une cotisation est déjà en attente. Vérifiez son statut avant d’en créer une nouvelle.'});
+  }
+  quote=await getContributionQuote(req.u.id,amount,(sql,params)=>client.query(sql,params));
+  const quotedTotal=Number(req.body.quoted_total);
+  if(Number.isFinite(quotedTotal)&&quotedTotal>0&&quotedTotal!==quote.total){
+   await client.query('ROLLBACK');
+   return res.status(409).json({error:'Le montant total a changé. Vérifiez le total affiché avant de relancer le paiement.'});
+  }
+  orderId='NF'+Date.now().toString(36).toUpperCase()+crypto.randomBytes(4).toString('hex').toUpperCase();
+  const created=await client.query("INSERT INTO payments(user_id,group_id,amount,fee,admin_fee,referral_fee,referrer_user_id,method,status,validated_at,provider_reference,provider_mode,provider_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',NULL,$9,$10,'initializing') RETURNING id",
+   [req.u.id,gid,amount,quote.fee,quote.admin_fee,quote.referral_fee,quote.referrer_user_id,method,orderId,String(process.env.ORANGE_MONEY_MODE||'sandbox').toLowerCase()]);
+  paymentId=created.rows[0].id;
+  await client.query('COMMIT');
+ }catch(e){
+  if(client)await client.query('ROLLBACK').catch(()=>{});
+  throw e;
+ }finally{if(client)client.release()}
  const returnUrl=publicBase+'/member/?payment_result=return&payment_id='+encodeURIComponent(paymentId);
  const cancelUrl=publicBase+'/member/?payment_result=cancel&payment_id='+encodeURIComponent(paymentId);
  const notifUrl=publicBase+'/api/providers/orange/notify';
@@ -406,7 +432,8 @@ app.post('/api/admin/payouts',adm,h(async(req,res)=>{const b=req.body,amount=par
  await q("INSERT INTO payouts(group_id,beneficiary,amount,method,due_date,scheduled_for,status) VALUES($1,$2,$3,$4,$5,COALESCE($5::date,CURRENT_DATE),'pending')",[gid,String(b.beneficiary).trim().slice(0,120),amount,b.method,DRX.test(b.due_date||'')?b.due_date:null]);res.json({ok:true})}));
 app.post('/api/admin/payouts/:id/:act',adm,h(async(req,res)=>{const st={pay:'paid',cancel:'cancelled'}[req.params.act];if(!st)return res.status(404).json({error:'Action inconnue'});
  const r=await q("UPDATE payouts SET status=$1,paid_at=CASE WHEN $1::text='paid' THEN now() END WHERE id=$2 AND status='pending' RETURNING id",[st,parseInt(req.params.id,10)||0]);if(!r.rowCount)return res.status(409).json({error:'Versement déjà traité'});res.json({ok:true})}));
-app.get('/api/admin/commissions',adm,h(async(req,res)=>{const F=fw(req.query,'p','p.created');res.json((await q("SELECT to_char(date_trunc('month',p.created),'YYYY-MM') AS m,coalesce(sum(p.fee),0)::int AS fee,count(*)::int AS n FROM payments p WHERE p.status='validated'"+AND(F.w)+' GROUP BY 1 ORDER BY 1',F.p)).rows)}));
+app.get('/api/admin/commissions',adm,h(async(req,res)=>{const F=fw(req.query,'p','p.created');res.json((await q("SELECT to_char(date_trunc('month',p.created),'YYYY-MM') AS m,coalesce(sum(CASE WHEN p.admin_fee IS NULL THEN p.fee ELSE COALESCE(p.admin_fee,0)+COALESCE(p.referral_fee,0) END),0)::bigint AS fee,coalesce(sum(p.admin_fee),0)::bigint AS admin_fee,coalesce(sum(p.referral_fee),0)::bigint AS referral_fee,coalesce(sum(CASE WHEN p.admin_fee IS NULL THEN p.fee ELSE 0 END),0)::bigint AS legacy_fee,count(*)::int AS n FROM payments p WHERE p.status='validated'"+AND(F.w)+' GROUP BY 1 ORDER BY 1',F.p)).rows)}));
+app.get('/api/admin/referral-commissions',adm,h(async(req,res)=>{const F=fw(req.query,'p','p.created');res.json((await q("SELECT u.id,u.name,u.phone,coalesce(sum(p.referral_fee),0)::bigint AS fee,count(*)::int AS contributions,max(p.validated_at) AS last_earned FROM payments p JOIN users u ON u.id=p.referrer_user_id WHERE p.status='validated' AND p.referrer_user_id IS NOT NULL AND COALESCE(p.referral_fee,0)>0"+AND(F.w)+' GROUP BY u.id,u.name,u.phone ORDER BY sum(p.referral_fee) DESC,u.name',F.p)).rows)}));
 app.get('/api/admin/crosstab',adm,h(async(req,res)=>{const F=fw(req.query,'p','p.created');res.json((await q("SELECT g.name AS g,to_char(date_trunc('month',p.created),'YYYY-MM') AS m,coalesce(sum(p.amount),0)::int AS v FROM payments p JOIN groups g ON g.id=p.group_id WHERE p.status='validated'"+AND(F.w)+' GROUP BY 1,2 ORDER BY 1,2',F.p)).rows)}));
 app.get('/api/admin/admins',adm,h(async(req,res)=>res.json((await q("SELECT id,name,phone,created FROM users WHERE role='admin' ORDER BY id")).rows)));
 app.post('/api/admin/password',adm,h(async(req,res)=>{const{old,next}=req.body;if(!next||String(next).length<12)return res.status(400).json({error:'Nouveau mot de passe : 12 caractères minimum'});
