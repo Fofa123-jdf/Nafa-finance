@@ -72,6 +72,8 @@ async function init(){
  CREATE TABLE IF NOT EXISTS member_documents(id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,doc_type TEXT NOT NULL,file_name TEXT NOT NULL,mime_type TEXT NOT NULL,file_data TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS member_support_requests(id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,subject TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',admin_response TEXT,created TIMESTAMPTZ DEFAULT now(),updated TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS admin_audit_log(id BIGSERIAL PRIMARY KEY,actor_id INT REFERENCES users(id) ON DELETE SET NULL,actor_role TEXT NOT NULL,method TEXT NOT NULL,path TEXT NOT NULL,status_code INT NOT NULL,remote_ip TEXT,user_agent TEXT,created TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS login_attempts(id BIGSERIAL PRIMARY KEY,phone_hash TEXT NOT NULL,attempted_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE INDEX IF NOT EXISTS login_attempts_phone_time_idx ON login_attempts(phone_hash,attempted_at DESC);
  CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created DESC);
  CREATE INDEX IF NOT EXISTS admin_audit_log_actor_idx ON admin_audit_log(actor_id,created DESC);
  DO $nafa_text_migration$
@@ -120,20 +122,26 @@ app.post('/api/register',h(async(req,res)=>{const{name,password,birth,sex}=req.b
  const st=(await S2('auto_register'))==='0'?'pending':'active';const r=await q('INSERT INTO users(name,phone,pass,birth,sex,status,referred_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,role',[String(name).trim(),phone,await bcrypt.hash(password,10),birth||null,sex||null,st,referrer]);const referral='NF-'+String(r.rows[0].id).padStart(6,'0');await q('UPDATE users SET referral_code=$1 WHERE id=$2',[referral,r.rows[0].id]);
  await q('INSERT INTO notifications(title,body) VALUES($1,$2)',['Nouveau membre inscrit',String(name).trim()]);res.json(st==='pending'?{pending:true}:{token:tok(r.rows[0])})}
  catch(e){if(e.code==='23505')return res.status(409).json({error:'Ce numéro de téléphone est déjà inscrit'});throw e}}));
-const loginBuckets=new Map();
-function throttleLogin(req,res,next){
+let loginThrottleCalls=0;
+async function throttleLogin(req,res,next){
  const key=ph(req.body&&req.body.phone);
  if(!key)return next();
- const now=Date.now(),windowMs=15*60*1000;
- const recent=(loginBuckets.get(key)||[]).filter(t=>now-t<windowMs);
- if(recent.length>=8)return res.status(429).json({error:'Trop de tentatives de connexion. Réessayez dans 15 minutes.'});
- recent.push(now);loginBuckets.set(key,recent);
- if(loginBuckets.size>5000){for(const [k,v] of loginBuckets){if(!v.length||now-v[v.length-1]>=windowMs)loginBuckets.delete(k);if(loginBuckets.size<=4500)break}}
- res.on('finish',()=>{if(res.statusCode<400)loginBuckets.delete(key)});
- next();
+ const phoneHash=crypto.createHmac('sha256',S).update(key).digest('hex');
+ try{
+  const r=await q("SELECT count(*)::int AS attempts FROM login_attempts WHERE phone_hash=$1 AND attempted_at>now()-interval '15 minutes'",[phoneHash]);
+  if(Number(r.rows[0]&&r.rows[0].attempts||0)>=8)return res.status(429).json({error:'Trop de tentatives de connexion. Réessayez dans 15 minutes.'});
+  await q('INSERT INTO login_attempts(phone_hash) VALUES($1)',[phoneHash]);
+  req.loginAttemptHash=phoneHash;
+  loginThrottleCalls++;
+  if(loginThrottleCalls%100===0)q("DELETE FROM login_attempts WHERE attempted_at<now()-interval '1 day'").catch(e=>console.error('Login attempt cleanup failed:',e.code||'unknown'));
+  next();
+ }catch(e){
+  console.error('Login throttle database check failed:',e.code||'unknown');
+  if(!res.headersSent)res.status(503).json({error:'Protection de connexion temporairement indisponible. Réessayez.'});
+ }
 }
 app.post('/api/login',throttleLogin,h(async(req,res)=>{const r=await q('SELECT * FROM users WHERE phone=$1',[ph(req.body.phone)]);const u=r.rows[0];
- if(!u||!(await bcrypt.compare(String(req.body.password||''),u.pass)))return res.status(400).json({error:'Numéro ou mot de passe incorrect'});if(u.status==='pending')return res.status(400).json({error:'Votre inscription est en attente de validation par l’administrateur'});if(u.status==='blocked')return res.status(400).json({error:'Compte désactivé'});res.json({token:tok(u),role:u.role})}));
+ if(!u||!(await bcrypt.compare(String(req.body.password||''),u.pass)))return res.status(400).json({error:'Numéro ou mot de passe incorrect'});if(u.status==='pending')return res.status(400).json({error:'Votre inscription est en attente de validation par l’administrateur'});if(u.status==='blocked')return res.status(400).json({error:'Compte désactivé'});if(req.loginAttemptHash)await q('DELETE FROM login_attempts WHERE phone_hash=$1',[req.loginAttemptHash]);res.json({token:tok(u),role:u.role})}));
 app.get('/api/me',auth(),h(async(req,res)=>{const r=await q('SELECT id,name,phone,birth,sex,role,created,avatar_data FROM users WHERE id=$1',[req.u.id]);if(!r.rowCount)return res.status(401).json({error:'auth'});res.json(r.rows[0])}));
 app.post('/api/my-avatar',auth(),h(async(req,res)=>{const data=String((req.body||{}).data_url||'');const m=data.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);if(!m)return res.status(400).json({error:'Choisissez une image JPG, PNG ou WEBP valide'});const raw=Buffer.from(m[2],'base64');if(!raw.length||raw.length>1024*1024)return res.status(413).json({error:'La photo optimisée doit faire 1 Mo maximum'});const safe='data:image/'+m[1]+';base64,'+m[2];const r=await q("UPDATE users SET avatar_data=$1 WHERE id=$2 AND role='member' RETURNING id",[safe,req.u.id]);if(!r.rowCount)return res.status(403).json({error:'Cette fonction est réservée aux membres'});res.json({ok:true})}));
 app.post('/api/my-avatar/delete',auth(),h(async(req,res)=>{const r=await q("UPDATE users SET avatar_data=NULL WHERE id=$1 AND role='member' RETURNING id",[req.u.id]);if(!r.rowCount)return res.status(403).json({error:'Cette fonction est réservée aux membres'});res.json({ok:true})}));
