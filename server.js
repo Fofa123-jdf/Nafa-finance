@@ -2,10 +2,12 @@ const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs')
 const {isOrangeMoneyConfigured,createOrangePayment,checkOrangePayment,classifyOrangeStatus}=require('./orange-money');
 const S=process.env.JWT_SECRET;if(!S){console.error('JWT_SECRET manquant');process.exit(1)}
 const db=process.env.DATABASE_URL;
-const pool=new Pool({connectionString:db,ssl:db&&!/localhost|127\.0\.0\.1/.test(db)?{rejectUnauthorized:false}:false});
-pool.on('connect',client=>{
- client.query('SET search_path TO nafa, public').catch(e=>console.error('Erreur configuration search_path PostgreSQL:',e.message));
-});
+if(!db){console.error('DATABASE_URL manquant');process.exit(1)}
+// Neon PgBouncer en mode transaction ne garantit pas la persistance de SET search_path.
+// Si DATABASE_URL vise le pooler Neon, utiliser son hôte direct pour conserver ce réglage de session.
+const databaseUrl=db.replace(/-pooler\./, '.');
+if(databaseUrl!==db)console.warn('Connexion Neon directe activée pour préserver le schéma PostgreSQL nafa.');
+const pool=new Pool({connectionString:databaseUrl,options:'-c search_path=nafa',ssl:databaseUrl&&!/localhost|127\.0\.0\.1/.test(databaseUrl)?{rejectUnauthorized:false}:false});
 const q=(t,p)=>pool.query(t,p);
 const app=express();app.use(express.json({limit:'5mb'}));
 const h=f=>(req,res)=>f(req,res).catch(e=>{console.error(e);res.status(500).json({error:'Erreur serveur'})});
