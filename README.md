@@ -60,6 +60,15 @@ Les contrôles de rôle sont effectués dans l'API, pas seulement dans le menu d
 
 Exécuter `npm test` pour lancer les tests automatiques de la politique des rôles avec le test runner intégré à Node.js.
 
+
+### Suivi des commissions et cotisations concurrentes
+
+- La première cotisation confirmée peut enregistrer une commission de 1 % pour l’administration et une commission additionnelle de 1 % pour un parrain existant. Les cotisations suivantes ne créent pas ces commissions.
+- La commission d’administration, celle du parrain et l’identifiant du parrain sont conservés séparément sur chaque nouvelle opération. Les états non confirmés ne sont pas comptés comme commissions acquises.
+- Un verrou transactionnel par membre et un contrôle des cotisations en attente limitent les créations concurrentes susceptibles d’appliquer plusieurs fois la règle de première cotisation.
+- Les frais des anciens paiements demeurent visibles dans la catégorie « historique non ventilé » : l’application ne devine pas rétroactivement quel parrain aurait reçu une commission.
+- Le tableau récapitulatif indique les commissions attribuées, mais ne signifie pas que l’argent a été versé. Les versements aux parrains exigent encore une procédure distincte avec contrôles et confirmation.
+
 ### Avant le passage en production
 
 1. Exécuter les tests et vérifier le déploiement de prévisualisation.
