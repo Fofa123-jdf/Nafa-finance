@@ -102,6 +102,7 @@ async function init(){
  await q(`CREATE INDEX IF NOT EXISTS payments_status_created_idx ON payments(status,created DESC);
  CREATE INDEX IF NOT EXISTS payments_user_status_idx ON payments(user_id,status);
  CREATE INDEX IF NOT EXISTS payments_group_created_idx ON payments(group_id,created DESC);
+ CREATE INDEX IF NOT EXISTS payments_referrer_status_created_idx ON payments(referrer_user_id,status,created DESC);
  CREATE INDEX IF NOT EXISTS payouts_status_created_idx ON payouts(status,created DESC);
  CREATE INDEX IF NOT EXISTS payouts_group_created_idx ON payouts(group_id,created DESC);
  CREATE INDEX IF NOT EXISTS users_role_status_created_idx ON users(role,status,created DESC);
