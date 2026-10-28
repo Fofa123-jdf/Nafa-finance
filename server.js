@@ -28,8 +28,7 @@ async function init(){
  CREATE TABLE IF NOT EXISTS groups(id SERIAL PRIMARY KEY,name TEXT NOT NULL,members INT DEFAULT 0,amount INT NOT NULL);
  CREATE TABLE IF NOT EXISTS payments(id SERIAL PRIMARY KEY,user_id INT REFERENCES users(id),group_id INT REFERENCES groups(id),amount INT NOT NULL,fee INT NOT NULL,method TEXT,status TEXT NOT NULL DEFAULT 'pending',created TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS notifications(id SERIAL PRIMARY KEY,title TEXT,body TEXT,created TIMESTAMPTZ DEFAULT now());
- ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE CASCADE;
- ALTER TABLE payouts ADD COLUMN IF NOT EXISTS schedule_notified_at TIMESTAMPTZ;`);
+ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE CASCADE;`);
  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
  ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'fr';
  ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'navy';
@@ -48,6 +47,7 @@ async function init(){
  CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_reference_uidx ON payments(provider_reference) WHERE provider_reference IS NOT NULL;
  CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
  CREATE TABLE IF NOT EXISTS payouts(id SERIAL PRIMARY KEY,group_id INT REFERENCES groups(id),beneficiary TEXT NOT NULL,amount INT NOT NULL,method TEXT,status TEXT NOT NULL DEFAULT 'pending',due_date DATE,paid_at TIMESTAMPTZ,created TIMESTAMPTZ DEFAULT now());
+ ALTER TABLE payouts ADD COLUMN IF NOT EXISTS schedule_notified_at TIMESTAMPTZ;
  CREATE TABLE IF NOT EXISTS messages(id SERIAL PRIMARY KEY,kind TEXT NOT NULL,title TEXT,body TEXT,group_id INT,ref TEXT,created TIMESTAMPTZ DEFAULT now());
  ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
  ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by INT REFERENCES users(id);
