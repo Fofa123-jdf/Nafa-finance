@@ -364,7 +364,7 @@ app.post('/api/admin/payouts',adm,h(async(req,res)=>{const b=req.body,gid=parseI
  const total=await q("SELECT ((SELECT coalesce(sum(amount),0) FROM payments WHERE group_id=$1 AND status='validated')-(SELECT coalesce(sum(amount),0) FROM payouts WHERE group_id=$1 AND status IN ('pending','paid')))::int AS amount",[gid]);
  const amount=Math.max(0,Number(total.rows[0].amount||0));
  if(amount<100)return res.status(409).json({error:'Le solde disponible du groupe est insuffisant : vérifiez les cotisations validées et les versements déjà programmés.'});
- if((await q("SELECT 1 FROM payouts WHERE group_id=$1 AND $2::date<current_date",[gid,due])).rowCount)return res.status(400).json({error:'La date du versement doit être aujourd’hui ou dans le futur.'});
+ if((await q("SELECT 1 WHERE $1::date<current_date",[due])).rowCount)return res.status(400).json({error:'La date du versement doit être aujourd’hui ou dans le futur.'});
  const created=await q("INSERT INTO payouts(group_id,beneficiary,amount,method,due_date,scheduled_for,status) VALUES($1,$2,$3,$4,$5,$5::date,'pending') RETURNING id",[gid,beneficiary,amount,method,due]);
  await recordPayoutNotice(created.rows[0].id,'pending','Montant calculé automatiquement sur le solde disponible : cotisations validées moins versements déjà programmés ou payés.');
  res.json({ok:true,id:created.rows[0].id,amount,scheduled_for:due,automatic_transfer:false});
